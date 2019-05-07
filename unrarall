@@ -80,81 +80,6 @@ OPTIONS
                      The clean up hooks specified determine what files/folders
                      are removed. By default this is 'none'. Hooks are separated
                      by a comma and are executed in order specified.
--f, --force          Force unrar even if sfv check failed and if --clean will
-                     clean even if unrar fails.
---full-path          Extract full path inside rar files instead of just
-                     extracting the files in the rar file which is the default
-                     behaviour.
--h, --help           Displays this help message and exits.
--v, --verbose        Show extraction progress as ${UNRARALL_EXECUTABLE_NAME}
-                     executes. This is not done by default
--q, --quiet          Be completely quiet. No output will be written to the
-                     screen
--o, --output         Specify a directory to extract rar files. By default files
-                     will be extracted in the directory containing the rar file.
---depth              Maximum depth that nested rar files will be extracted. By
-                     default, is a depth of 4.
---skip-if-exists     Skip extraction of archive if all files already exists.
-                     Note: files are only checked by name, not by contents!
---password-file      Specify path to password file.
-                     Default \"${UNRARALL_PASSWORD_FILE}\".
---backend            Force particular backend (unrar, rar, or 7z)
---find-binary        Force a particular find binary.
---version            Give version information version.
-"
-
-#List the detected clean up hooks with their help information
-detect_clean_up_hooks
-echo "CLEAN UP HOOKS"
-for hook in ${UNRARALL_DETECTED_CLEAN_UP_HOOKS[*]} ; do
-  echo "$hook : $( unrarall_clean_${hook} help)"
-done
-
-echo "all : Execute all the above hooks. They are executed in the order they are listed above."
-echo "none : Do not execute any clean up hooks (default)."
-
-
-echo "
-VERSION: $UNRARALL_VERSION
-"
-}
-
-function clean_up
-{
-  #perform any necessary clean up
-  message error "${UNRARALL_EXECUTABLE_NAME} is exiting"
-  exit 1;
-}
-
-#Catch exit signals
-trap clean_up SIGQUIT SIGINT SIGTERM
-
-#function to display pretty messages
-function message()
-{
-  #Assume $1 is message type & $2 is message
-  #See http://www.frexx.de/xterm-256-notes/ for information on xterm colour codes
-
-  if [ "$QUIET" -ne 1 ]; then
-    case "$1" in
-      error)
-        #use escape sequence to show red text
-        echo -e "\033[31m${2}\033[0m" 1>&2
-      ;;
-      ok)
-        #use escape sequence to show green text
-        echo -e "\033[32m${2}\033[0m"
-      ;;
-      nnl)
-        #use echo -n to avoid new line
-        echo -n "$2"
-      ;;
-      info)
-        echo "$2"
-      ;;
-      *)
-        echo "$2"
-    esac
   fi
 }
 
@@ -185,6 +110,8 @@ function getUnrarFlags()
 #function to check if an archive has been extracted already
 function isAlreadyExtracted()
 {
+  #test="${UNRARALL_OUTPUT_DIR}/${filename}"
+  #message info "isAlreadyExtracted \"$1\" \"$2\" \"$test\" "
   case "$1" in
     unrar)
       file_listing_cmd="unrar lb \"$2\""
@@ -205,82 +132,16 @@ function isAlreadyExtracted()
     ;;
   esac
   for rar_file in $(eval $file_listing_cmd); do
-    if [ ! -e $rar_file ]; then
+    #message info "Checking if \"$rar_file\" has been extracted."
+    check_file="${UNRARALL_OUTPUT_DIR}/${rar_file}"
+    if [ ! -e $check_file ]; then
       return 1
     fi
   done
   return 0
 }
 
-#function to check if file is password protected
-function isRarEncrypted()
-{
-  case "$1" in
-    unrar|rar)
-      rar_listing=$(unrar l -p- "$2")
-      echo "${rar_listing}" | grep -q -E "^\*"
-      if [ "$?" -eq 0 ] ; then
-        # RAR file contains encrypted files
-        echo 1
-      else
-        echo "${rar_listing}" | grep -q -E "^Details: .+ encrypted headers"
-        if [ "$?" -eq 0 ] ; then
-          # RAR file is encrypted (even the file listing)
-          echo 1
-        else
-          # RAR file is not encrypted
-          echo 0
-        fi
-      fi
-    ;;
-    7z)
-      rar_listing=$(7z l -slt -p- "$2")
-      echo "${rar_listing}" | grep -q -E "^Encrypted = \+$"
-      if [ "$?" -eq 0 ] ; then
-        # RAR file contains encrypted files
-        echo 1
-      else
-        echo "${rar_listing}" | grep -q -E "^Error: .+: Can not open encrypted archive\. Wrong password\?$"
-        if [ "$?" -eq 0 ] ; then
-          # RAR file is encrypted (even the file listing)
-          echo 1
-        else
-          # RAR file is not encrypted
-          echo 0
-        fi
-      fi
-    ;;
-    echo)
-        echo 0
-    ;;
-    *)
-      #This code should only be reached if the programmer has made an error
-      message error "Failed to check encryption using unsupported program \"$1\""
-      #We will probably be called in a sub shell but we need to kill the parent shell
-      kill -TERM ${UNRARALL_PID}
-      exit 1;
-    ;;
-  esac
-}
-
-function detect_clean_up_hooks()
-{
-  [ $VERBOSE -eq 1 ] && message info "Detecting clean up hooks..."
-  HOOKS=$(declare -F | grep -Eo ' unrarall_clean_[_a-z]+')
-  index=0
-  EMPTY_FOLDER=0
-  for hook in $HOOKS ;do
-    [ $VERBOSE -eq 1 ] && message info "Found $hook";
-
-    if [ "$hook" == "unrarall_clean_empty_folders" ]; then
-        # it is executed last for --clean=all
-        EMPTY_FOLDER=1
-        continue
-    fi
-
-    UNRARALL_DETECTED_CLEAN_UP_HOOKS[$index]=$( echo "$hook" | sed_wrapper 's/unrarall_clean_//')
-    ((index++))
-  done
+#fu
 
   if [ ${EMPTY_FOLDER} -eq 1 ]; then
     UNRARALL_DETECTED_CLEAN_UP_HOOKS[$index]="empty_folders"
@@ -341,95 +202,7 @@ function unrarall_clean_rar()
 {
   case "$1" in
     help)
-      echo "Removes rar files and sfv files"
-    ;;
-    clean)
-      # Strip out trailing slash if there is one. If we leave it there it'll break the regex passed to find
-      _RARFILE_DIR="${3%/}"
-      [ $VERBOSE -eq 1 ] && message info "Deleting ${2} rar files (in \"${_RARFILE_DIR}\")..."
-      if [ ! -d "${_RARFILE_DIR}" ]; then
-        message error "RARFILE_DIR (${_RARFILE_DIR}) is not a directory"
-        return
-      fi
-
-      #-maxdepth 1 is very important, we only want to delete rar files in the current directory!
-      find_wrapper "${_RARFILE_DIR}" -maxdepth 1 -type f -iregex "${_RARFILE_DIR}/$(find_regex_escape "$2")"'\.(sfv|[0-9]+|[r-z][0-9]+|rar|part[0-9]+\.rar)$' -exec ${RM} -f $( [ $VERBOSE -eq 1 ] && echo '-v') '{}' \;
-    ;;
-    *)
-      message error "Could not execute clean-rar hook"
-    ;;
-  esac
-}
-
-function unrarall_clean_osx_junk()
-{
-  case "$1" in
-    help)
-      echo "Removes junk OSX files"
-    ;;
-    clean)
-      unrarall_remove_file_or_folder ".DS_Store" "osx_junk"
-    ;;
-    *)
-      message error "Could not execute osx_junk hook"
-    ;;
-  esac
-}
-
-function unrarall_clean_windows_junk()
-{
-  case "$1" in
-    help)
-      echo "Removes junk Windows files"
-    ;;
-    clean)
-      unrarall_remove_file_or_folder "Thumbs.db" "windows_junk"
-    ;;
-    *)
-      message error "Could not execute windows_junk hook"
-    ;;
-  esac
-}
-
-function unrarall_clean_covers_folders()
-{
-  case "$1" in
-    help)
-      echo "Removes junk Covers folders"
-    ;;
-    clean)
-      [ "$VERBOSE" -eq 1 ] && message info "Removing all Covers/ folders"
-      find_wrapper . -depth -type d -iname 'covers' -exec ${RM} -rf $( [ $VERBOSE -eq 1 ] && echo '-v') '{}' \;
-    ;;
-    *)
-      message error "Could not execute covers_folders hook"
-    ;;
-  esac
-}
-
-function unrarall_clean_proof_folders()
-{
-  case "$1" in
-    help)
-      echo "Removes junk Proof folders"
-    ;;
-    clean)
-      [ "$VERBOSE" -eq 1 ] && message info "Removing all Proof/ folders"
-      find_wrapper . -depth -type d -iname 'proof' -exec ${RM} -rf $( [ $VERBOSE -eq 1 ] && echo '-v') '{}' \;
-    ;;
-    *)
-      message error "Could not execute proof_folders hook"
-    ;;
-  esac
-}
-
-function unrarall_clean_sample_folders()
-{
-  case "$1" in
-    help)
-      echo "Removes Sample folders"
-    ;;
-    clean)
+      echo "Removes rar files and sfv fi
       [ "$VERBOSE" -eq 1 ] && message info "Removing all Sample/ folders"
       find_wrapper . -type d -iname 'sample' -exec ${RM} -rf $( [ $VERBOSE -eq 1 ] && echo '-v') '{}' \;
     ;;
@@ -490,81 +263,7 @@ function safe_move()
   fi
 }
 
-# Detect the version of sed available and create a wrapper function
-# that will behave like sed using "extended regular expressions"
-# This is to force consistency across multiple platforms.
-if [ "X$(${SED} --version >/dev/null 2>&1 ; echo $?)" == "X0" ]; then
-  # GNU find supports `--version`
-  [ $VERBOSE -eq 1 ] && message info "Detected GNU sed"
-  function sed_wrapper() {
-    ${SED} --regexp-extended "$@"
-  }
-else
-  # Assume *BSD/macOS sed
-  [ $VERBOSE -eq 1 ] && message info "Detected BSD sed"
-  function sed_wrapper() {
-    ${SED} -E "$@"
-  }
-fi
-
-
-# Parse command line arguments
-if [ "$#" -lt 1 ]; then
-  message error "Insufficient number of arguments. See ${UNRARALL_EXECUTABLE_NAME} --help"
-  exit 1;
-fi
-
-# Save a copy of the original cmd + args
-SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-SCRIPT_NAME=`basename "${BASH_SOURCE[0]}"`
-UNRARALL_CMD="$SCRIPT_DIR/$SCRIPT_NAME"
-
-while [ -n "$1" ]; do
-  if [ $# -gt 1 ] || [ $( echo "$1" | grep -Ec '^(-h|--help|--version)$' ) -eq 1 ] ; then
-
-    # save all the args passed to the cmd, except for --depth
-    if [ "${1}" != "--depth" ]; then
-      UNRARALL_CMD="${UNRARALL_CMD} ${1}"
-    fi
-
-    #Handle optional arguments
-    case "$1" in
-      -h | --help )
-        usage
-        exit 0
-      ;;
-      --version )
-        echo "$UNRARALL_VERSION"
-        exit 0
-      ;;
-      -d | --dry )
-        UNRARALL_BIN=echo
-        RM="echo"
-      ;;
-      --allow-failures )
-        ALLOW_FAILURES=1
-      ;;
-      -s | --disable-cksfv )
-        CKSFV=0
-      ;;
-      --clean=*)
-        index=0;
-        for hook in $( echo "$1" | sed_wrapper 's/--clean=//' | tr , " ") ; do
-          UNRARALL_CLEAN_UP_HOOKS_TO_RUN[$index]="$hook"
-          ((index++))
-        done
-        [ $index -eq 0 ] && { message error "Clean up hooks must be specified when using --clean="; exit 1; }
-      ;;
-      -f | --force )
-        FORCE=1
-      ;;
-      -v | --verbose )
-        VERBOSE=1
-        CKSFV_FLAGS="-g"
-      ;;
-      -q | --quiet )
-        VERBOSE=0
-        QUIET=1
+# Detect the version
       ;;
       --full-path )
         UNRAR_METHOD="x"
@@ -626,81 +325,7 @@ while [ -n "$1" ]; do
         # If using `--dry` don't modify UNRARALL_BIN
         requested_backend="$( echo "$1" | sed_wrapper 's/--backend=//')"
         if [ "$UNRARALL_BIN" != 'echo' ]; then
-          case "${requested_backend}" in
-            unrar)
-              UNRARALL_BIN=unrar
-            ;;
-            7z)
-              UNRARALL_BIN=7z
-            ;;
-            rar)
-              UNRARALL_BIN=rar
-            ;;
-            *)
-              message error "Unsupported backend \"${requested_backend}\""
-              exit 1
-              ;;
-            esac
-        fi
-      ;;
-      --find-binary)
-        shift
-        UNRARALL_CMD="${UNRARALL_CMD} ${1}"
-        FIND="${1}"
-      ;;
-      *)
-        # user issued unrecognised option
-        message error "Unrecognised option: $1"
-        usage
-        exit 1
-      ;;
-    esac
-  else
-    #Handle mandatory argument
-    DIR="$1"
-
-  fi
-    shift
-done
-
-# Detect the version of find available and create a wrapper function that
-# that will behave like find using posix egrep style regular expressions.
-# This is to force consistency across multiple platforms.
-
-# Check FIND binary exists
-if ! type -P "${FIND}" > /dev/null 2>&1 ; then
-  message error "Cannot find the \"find\" binary (\"${FIND}\") in your path"
-  exit 1
-fi
-
-# FIXME: Require -iregex support for now. We should try to teach the wrappers
-# how to fall back to `-regex` or something...
-if [ "$(${FIND} /dev/null -iregex 'test' > /dev/null 2>&1 ; echo $?)" -ne "0" ]; then
-  message error "Your version of find (\"${FIND}\") does not support the \"-iregex\" flag"
-  exit 1
-fi
-
-if [ "X$(${FIND} --version >/dev/null 2>&1 ; echo $?)" == "X0" ]; then
-  # GNU find supports `--version`
-  [ $VERBOSE -eq 1 ] && message info "Detected GNU find"
-  function find_wrapper() {
-    if [ $# -lt 2 ]; then
-      message error "Invalid args to find_wrapper"
-      exit 1
-    fi
-    args=("$@")
-    unset args[0]
-    ${FIND} "$1" -regextype posix-egrep "${args[@]}"
-  }
-else
-  # Assume *BSD/macOS find
-  [ $VERBOSE -eq 1 ] && message info "Detected BSD find"
-  function find_wrapper() {
-    ${FIND} -E "$@"
-  }
-fi
-[ $VERBOSE -eq 1 ] && message info "Using find: ${FIND}"
-
+   
 
 detect_clean_up_hooks
 
@@ -761,61 +386,7 @@ else
 fi
 
 #Inform the user about the binary chosen
-[ $VERBOSE -eq 1 ] && message info "Using \"${UNRARALL_BIN}\" to extract rar files" ;
-
-# Check $DIR exists and is a directory
-if [ -d "$DIR" ]; then
-  message normal "Working over directory \"${DIR}\""
-else
-  message error "Cannot find directory \"${DIR}\""
-  exit 1;
-fi
-
-CURRENT_DIR=`pwd`
-
-#find all files
-COUNT=0
-FAIL_COUNT=0
-
-#modify IFS for new lines so filenames with spaces do not get split
-IFS_TEMP=$IFS
-IFS=$(echo -en "\n\b")
-MATCHRARMIME='x-rar'
-
-if [ "$CKSFV" -eq 1 ]; then
-  if ! type -P cksfv 2>&1 > /dev/null ; then
-    message info "Install cksfv in order to get CRC checked before using unrar"
-    CKSFV=0
-  fi
-fi
-
-# assuming only the .rar files are of interest
-for file in $(find_wrapper "$DIR" -depth -iregex '.*\.(rar|001)$'); do
-
-  filename=`basename "${file}"`
-  # Strip extension off filename
-  sfilename="${filename%.*}"
-
-  # if rar is of style partxx.rar then only extract $filename.part01.rar
-  if [[ "$file" =~ .part[0-9]+.rar$ ]]; then
-    if [[ "$file" =~ .part0*1.rar$ ]]; then
-      sfilename=`echo "$sfilename" | sed_wrapper 's/\.part[0-9]+$//'`
-      [ $VERBOSE -eq 1 ] && message info "Using rar 3.x split archive format"
-    else
-      continue
-    fi
-  # allow rar archives with .001 -> .999 naming
-  elif [[ "$file" =~ .[0-9][0-9][0-9]$ ]]; then
-    if [[ "$file" =~ .001$ ]]; then
-      message info "Your packager is wrong, 001 is not an acceptable filename for a rar file. We'll attempt to clean up his mess anyways..."
-    else
-      continue
-    fi
-  fi
-
-  # check file really is a rar file
-  if [[ ! "`file --mime "${file}"`" =~ $MATCHRARMIME ]]; then
-    message error "Skipping file \"${file}\" because it does not appear to be a valid rar file."
+[ $VERBOSE -eq 1 ] && message info "Using \"${UNRARALL_BIN}\" to ext
     # Treat this as a failure so we exit with a non zero exit code
     let FAIL_COUNT=FAIL_COUNT+1
     continue
@@ -841,7 +412,7 @@ for file in $(find_wrapper "$DIR" -depth -iregex '.*\.(rar|001)$'); do
 
   # Compute fullpath to rar file
   filenameAbsolute="$(pwd)/${filename}"
-
+  #message ok "File \"${filenameAbsolute}\" appears to have already been extracted, skipping..."
   # Check if file is extracted
   if [ "$SKIP_IF_EXISTS" -eq 1 ] && [ "$SUCCESS" -eq 0 ] && [ "$FORCE" -eq 0 ]; then
     isAlreadyExtracted ${UNRARALL_BIN} ${filenameAbsolute}
@@ -853,7 +424,7 @@ for file in $(find_wrapper "$DIR" -depth -iregex '.*\.(rar|001)$'); do
 
   # Switch to a temporary directory so the extracted file does not clobber anything
   # some special handling here to support macos: http://unix.stackexchange.com/a/84980/210181
-  tmp_dir=`mktemp -d -p . 2>/dev/null || TMPDIR=$(pwd) mktemp -d -t 'unrarall'`
+  tmp_dir=`mktemp -d -p . 2>/dev/null || TMPDIR=$(pwd) mktemp -d -t 'unrarall.XXXXXX'`
   if [ $? -ne 0 ] || [ -z ${tmp_dir} ] || [ ! -d "${tmp_dir}" ]; then
     message error "Failed to create a temporary directory to handle extraction"
     exit 1
@@ -877,52 +448,7 @@ for file in $(find_wrapper "$DIR" -depth -iregex '.*\.(rar|001)$'); do
       SUCCESS=$?
     else
       # The file is encrypted. if we have a password file, then use it
-      if [ -s "${UNRARALL_PASSWORD_FILE}" ] ; then
-        [ $VERBOSE -eq 1 ] && message info "This archive is encrypted. Trying passwords from password file \"${UNRARALL_PASSWORD_FILE}\"..."
-        while true; do read password || break
-          # Use eval so that redirection gets evaluated correctly
-          eval ${UNRARALL_BIN} ${UNRAR_METHOD} $( getUnrarFlags ${UNRARALL_BIN}) -p"\"$password\"" "\"${filenameAbsolute}\"" \
-            $([ "$VERBOSE" -eq 0 -a "X${UNRARALL_BIN}" != "Xecho" ] && echo ">/dev/null")
-          SUCCESS=$?
-          if [ "$SUCCESS" -eq 0 ] ; then
-            [ $VERBOSE -eq 1 ] && message ok "Extraction succeeded using password: \"${password}\""
-            break
-          else
-            [ $VERBOSE -eq 1 ] && message error "Extraction failed using password: \"${password}\""
-          fi
-        done < "$UNRARALL_PASSWORD_FILE"
-      else
-        message error "Archive \"$file\" is encrypted. Please put the password in \"${UNRARALL_PASSWORD_FILE}\" to extract it."
-        SUCCESS=1
-      fi
-    fi
-  fi
-
-  # Check if any recursive extraction is needed
-  if [ "$SUCCESS" -eq 0 ] && [ "${DEPTH}" -gt 0 ] && [[ -n `find_wrapper . -depth -iregex '.*\.(rar|001)$'` ]]; then
-    [ $VERBOSE -eq 1 ] && message ok "Detected rar archives inside of \"$file\", recursively extracting"
-    let NEW_DEPTH=DEPTH-1
-    eval $UNRARALL_CMD --depth $NEW_DEPTH ${tmp_dir}
-    if [ $? -ne 0 ]; then
-      message error "Failed to recursively extract \"${filenameAbsolute}\""
-      SUCCESS=1
-    fi
-  fi
-
-  # if fail remove from count
-  if [ "$SUCCESS" -eq 0 ] && [ "$FORCE" -eq 0 ] ; then
-    message ok "ok";
-  elif [ "$SUCCESS" -eq 0 ] && [ "$FORCE" -eq 1 ] ; then
-    message ok "ok (forced)";
-  else
-    let COUNT=COUNT-1
-    let FAIL_COUNT=FAIL_COUNT+1
-    [ "$FORCE" -eq 0 ] && message error "failed" || message error "failed (forced)"
-  fi
-
-  # Save the files extracted
-  files=( $(find_wrapper . -mindepth 1 -type f) )
-  # Save the empty directories extracted
+      if [ -s "${UNRARAL
   empty_directories=( $(find_wrapper . -mindepth 1 -type d -empty) )
 
   # If user specified extraction directory change to it now
